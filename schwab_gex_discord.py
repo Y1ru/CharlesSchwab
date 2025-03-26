@@ -68,7 +68,7 @@ def get_schwab_options_chain(symbol):
     options['option'] = options.apply(lambda x: f"{symbol}{x['expiration_date'].strftime('%y%m%d')}{x['put_call']}{int(x['strike_price']*1000)}", axis=1)
     
     # Calculate days to expiration
-    snapshot_time = pd.to_datetime('now')
+    snapshot_time = pd.Timestamp.now()  # Changed from pd.to_datetime('now')
     options['days_to_expiration'] = np.busday_count(
         pd.Series(snapshot_time).dt.date.values.astype('datetime64[D]'),
         options['expiration_date'].dt.date.values.astype('datetime64[D]')) / 262
@@ -91,7 +91,7 @@ def _calcGammaExCall(S, K, iv, T, r, q, OI):
 def _isThirdFriday(d):
     return d.weekday() == 4 and 15 <= d.day <= 21
 
-def _gamma_range(quote, from_range=0.8, to_range=1.2):
+def _gamma_range(quote, from_range=0.98, to_range=1.02): 
     spotPrice = quote['current_price']
     fromStrike = from_range * spotPrice
     toStrike = to_range * spotPrice
@@ -160,9 +160,9 @@ def naive_gamma(quote, options):
     return quote, levels, totalGamma, totalGammaExNext, totalGammaExFri, zeroGamma, nextExpiry, nextMonthlyExp
 
 def spot_gamma(df, spot):
-    df = options.copy()
+    df = df.copy()
 
-    groups = options.option.str.extract(r'([A-Z]+\d{6})[CP](\d+)')
+    groups = df.option.str.extract(r'([A-Z]+\d{6})[CP](\d+)')
     df['key'] = [f'{prefix}@{strike}' for (prefix, strike) in zip(groups[0], groups[1])]
     df_ = df[df.put_call == 'C']
     df.loc[df_.index, 'GEX'] = df_.gamma * df_.open_interest * 100 * spot * spot * 0.01
@@ -175,195 +175,283 @@ def spot_gamma(df, spot):
 
     return df_agg
 
-def plot_gamma_exposure(todayDate, quote, levels, totalGamma, totalGammaExNext, totalGammaExFri, zeroGamma, nextExpiry, nextMonthlyExp):
+def plot_gamma_exposure(todayDate, quote, levels, totalGamma, totalGammaExNext, totalGammaExFri, zeroGamma, nextExpiry, nextMonthlyExp, ax=None):
     spotPrice, fromStrike, toStrike = _gamma_range(quote)
-    fig, ax = plt.subplots(figsize=(24, 6))
-
+    
+    # Create figure and axis if not provided
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(24, 6))
+        fig.patch.set_facecolor(background_color)
+        show_plot = True
+    else:
+        show_plot = False
+        
     # Set background color
-    fig.patch.set_facecolor(background_color)
     ax.set_facecolor(background_color)
 
-    plt.grid(True, color='white')
-    plt.plot(levels, totalGamma, label="All Expiries", color='white')
+    ax.grid(True, color='white')
+    ax.plot(levels, totalGamma, label="All Expiries", color='white')
     if str(nextExpiry) != 'NaT':
-        plt.plot(levels, totalGammaExNext, label=f"Ex-Next Expiry {nextExpiry.strftime('%d %b %Y')}", color='orange')
+        ax.plot(levels, totalGammaExNext, label=f"Ex-Next Expiry {nextExpiry.strftime('%d %b %Y')}", color='orange')
     if str(nextMonthlyExp) != 'NaT':
-        plt.plot(levels, totalGammaExFri, label=f"Ex-Next Monthly Expiry {nextMonthlyExp.strftime('%d %b %Y')}", color='white')
+        ax.plot(levels, totalGammaExFri, label=f"Ex-Next Monthly Expiry {nextMonthlyExp.strftime('%d %b %Y')}", color='white')
     chartTitle = f"Gamma Exposure Profile, {quote['symbol']}, {todayDate.strftime('%d %b %Y')}"
-    plt.title(chartTitle, fontweight="bold", fontsize=20, color='white')
-    plt.xlabel('Index Price', fontweight="bold", color='white')
-    plt.ylabel('Gamma Exposure ($ billions/1% move)', fontweight="bold", color='white')
-    plt.axvline(x=spotPrice, color='r', lw=1, label=f"{quote['symbol']} Spot: {spotPrice:,.0f}")
+    ax.set_title(chartTitle, fontweight="bold", fontsize=14, color='white')
+    ax.set_xlabel('Index Price', fontweight="bold", color='white')
+    ax.set_ylabel('Gamma Exposure (\$ billions/1% move)', fontweight="bold", color='white')
+    ax.axvline(x=spotPrice, color='r', lw=1, label=f"{quote['symbol']} Spot: {spotPrice:,.0f}")
     
     # Handle zero gamma crossing point
     if zeroGamma is not None and np.isfinite(zeroGamma):
-        plt.axvline(x=zeroGamma, color='cyan', lw=3, label=f"Gamma Flip: {zeroGamma:,.0f}")
+        ax.axvline(x=zeroGamma, color='cyan', lw=3, label=f"Gamma Flip: {zeroGamma:,.0f}")
         # Only fill between if we have valid zero gamma
         trans = ax.get_xaxis_transform()
         if np.isfinite(min(totalGamma)) and np.isfinite(max(totalGamma)):
-            plt.fill_between([fromStrike, zeroGamma], min(totalGamma), max(totalGamma), 
+            ax.fill_between([fromStrike, zeroGamma], min(totalGamma), max(totalGamma), 
                             facecolor='red', alpha=0.1, transform=trans)
-            plt.fill_between([zeroGamma, toStrike], min(totalGamma), max(totalGamma), 
+            ax.fill_between([zeroGamma, toStrike], min(totalGamma), max(totalGamma), 
                             facecolor='green', alpha=0.1, transform=trans)
     else:
-        plt.axvline(x=quote['current_price'], color='yellow', lw=2, linestyle='dotted', 
+        ax.axvline(x=quote['current_price'], color='yellow', lw=2, linestyle='dotted', 
                     label='No Gamma Flip Detected')
     
-    plt.axhline(y=0, color='grey', lw=1)
-    plt.xlim([fromStrike, toStrike])
-    plt.legend(facecolor=background_color, edgecolor='white', fontsize=12, 
+    ax.axhline(y=0, color='grey', lw=1)
+    ax.set_xlim([fromStrike, toStrike])
+    ax.legend(facecolor=background_color, edgecolor='white', fontsize=10, 
               loc='upper left', framealpha=1, labelcolor='white')
-    ax.xaxis.set_major_locator(mticker.MaxNLocator(nbins=25))
+    ax.xaxis.set_major_locator(mticker.MaxNLocator(nbins=15))
     ax.tick_params(axis='x', colors='white')
     ax.tick_params(axis='y', colors='white')
-    plt.show()
+    
+    if show_plot:
+        plt.show()
+        
+    return ax
 
-def plot_absoulte_gamma_exposure(quote, df_agg):
+def plot_absoulte_gamma_exposure(quote, df_agg, ax=None):
     spotPrice, fromStrike, toStrike = _gamma_range(quote)
-    fig, ax = plt.subplots(figsize=(24, 6))
-
+    
+    # Create figure and axis if not provided
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(24, 6))
+        fig.patch.set_facecolor(background_color)
+        show_plot = True
+    else:
+        show_plot = False
+        
     # Set background color
-    fig.patch.set_facecolor(background_color)
     ax.set_facecolor(background_color)
 
-    plt.grid(True, color='white')
+    ax.grid(True, color='white')
 
     # Determine colors for bars
     colors = ['#2da19a' if val > 0 else '#ef524f' for val in df_agg['total_gamma']]
 
-    plt.bar(df_agg.strike_price, df_agg['total_gamma'].to_numpy(), width=6, linewidth=0.1, edgecolor='k', color=colors)
-    plt.xlim([fromStrike, toStrike])
-    title = f"Total Gamma: ${df_agg.total_gamma.sum():.2f} Bn per 1% {quote['symbol']} Move"
-    plt.title(title, fontweight="bold", fontsize=20, color='white')
-    plt.xlabel('Strike', fontweight="bold", color='white')
-    plt.ylabel('Spot Gamma Exposure ($ billions/1% move)', fontweight="bold", color='white')
-    plt.axvline(x=spotPrice, color='r', lw=1, label=f"{quote['symbol']} Spot - {spotPrice:,.0f}")
-    plt.legend(facecolor=background_color, edgecolor='white', fontsize=12, loc='upper left', framealpha=1, labelcolor='white')
+    ax.bar(df_agg.strike_price, df_agg['total_gamma'].to_numpy(), width=6, linewidth=0.1, edgecolor='k', color=colors)
+    ax.set_xlim([fromStrike, toStrike])
+    title = f"Total Gamma: \\${df_agg.total_gamma.sum():.2f} Bn per 1% {quote['symbol']} Move"
+    ax.set_title(title, fontweight="bold", fontsize=14, color='white')
+    ax.set_xlabel('Strike', fontweight="bold", color='white')
+    ax.set_ylabel('Spot Gamma Exposure (\$ billions/1% move)', fontweight="bold", color='white')
+    ax.axvline(x=spotPrice, color='r', lw=1, label=f"{quote['symbol']} Spot - {spotPrice:,.0f}")
+    ax.legend(facecolor=background_color, edgecolor='white', fontsize=10, loc='upper left', framealpha=1, labelcolor='white')
     ax.tick_params(axis='x', colors='white')
     ax.tick_params(axis='y', colors='white')
-    plt.show()
+    
+    if show_plot:
+        plt.show()
+        
+    return ax
 
-def plot_absoulte_gamma_exposure_by_calls_and_puts(quote, df_agg):
+def plot_absoulte_gamma_exposure_by_calls_and_puts(quote, df_agg, ax=None):
     spotPrice, fromStrike, toStrike = _gamma_range(quote)
-    fig, ax = plt.subplots(figsize=(24, 6))
-
+    
+    # Create figure and axis if not provided
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(24, 6))
+        fig.patch.set_facecolor(background_color)
+        show_plot = True
+    else:
+        show_plot = False
+        
     # Set background color
-    fig.patch.set_facecolor(background_color)
     ax.set_facecolor(background_color)
 
-    plt.grid(True, color='white')
-    plt.bar(df_agg.strike_price, df_agg['GEX_call'].to_numpy() / 10 ** 9, width=6, linewidth=0.1, edgecolor='k', label="Call Gamma", color='#2da19a')
-    plt.bar(df_agg.strike_price, df_agg['GEX_put'].to_numpy() / 10 ** 9, width=6, linewidth=0.1, edgecolor='k', label="Put Gamma", color='#ef524f')
-    plt.xlim([fromStrike, toStrike])
-    title = f"Total Gamma: ${df_agg.total_gamma.sum():.2f} Bn per 1% {quote['symbol']} Move"
-    plt.title(title, fontweight="bold", fontsize=20, color='white')
-    plt.xlabel('Strike', fontweight="bold", color='white')
-    plt.ylabel('Spot Gamma Exposure ($ billions/1% move)', fontweight="bold", color='white')
-    plt.axvline(x=spotPrice, color='r', lw=1, label=f"{quote['symbol']} Spot - {spotPrice:,.0f}")
-    plt.legend(facecolor=background_color, edgecolor='white', fontsize=12, loc='upper left', framealpha=1, labelcolor='white')
+    ax.grid(True, color='white')
+    ax.bar(df_agg.strike_price, df_agg['GEX_call'].to_numpy() / 10 ** 9, width=6, linewidth=0.1, edgecolor='k', label="Call Gamma", color='#2da19a')
+    ax.bar(df_agg.strike_price, df_agg['GEX_put'].to_numpy() / 10 ** 9, width=6, linewidth=0.1, edgecolor='k', label="Put Gamma", color='#ef524f')
+    ax.set_xlim([fromStrike, toStrike])
+    title = f"Total Gamma: \\${df_agg.total_gamma.sum():.2f} Bn per 1% {quote['symbol']} Move"
+    ax.set_title(title, fontweight="bold", fontsize=14, color='white')
+    ax.set_xlabel('Strike', fontweight="bold", color='white')
+    ax.set_ylabel('Spot Gamma Exposure (\$ billions/1% move)', fontweight="bold", color='white')
+    ax.axvline(x=spotPrice, color='r', lw=1, label=f"{quote['symbol']} Spot - {spotPrice:,.0f}")
+    ax.legend(facecolor=background_color, edgecolor='white', fontsize=10, loc='upper left', framealpha=1, labelcolor='white')
     ax.tick_params(axis='x', colors='white')
     ax.tick_params(axis='y', colors='white')
+    
+    if show_plot:
+        plt.show()
+        
+    return ax
+
+import datetime  # Add this at the top with other imports
+import matplotlib.animation as animation
+
+def plot_index_gamma_report(quote, options, snapshot_time, symbol, dashboard=True):  # Added symbol parameter
+    # Create initial dashboard
+    fig = plt.figure(figsize=(24, 16))
+    fig.patch.set_facecolor(background_color)
+    
+    # Add clock to the figure
+    clock_text = fig.text(0.95, 0.98, '', fontsize=12, color='white', ha='right')
+    
+    def update_clock(text_obj):
+        text_obj.set_text(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    
+    def update_plots(frame):
+        try:
+            # Clear the figure
+            fig.clear()
+            fig.patch.set_facecolor(background_color)
+            
+            # Re-add clock text after clearing
+            nonlocal clock_text
+            clock_text = fig.text(0.95, 0.98, '', fontsize=12, color='white', ha='right')
+            update_clock(clock_text)
+            
+            # Add title with dynamic symbol
+            fig.suptitle(f"{symbol} Gamma Exposure Dashboard - Live", 
+                        fontsize=24, fontweight='bold', color='white')
+            
+            # Get fresh data with user's symbol
+            quote, options, snapshot_time = get_schwab_options_chain(symbol)
+            gamma_params = naive_gamma(quote, options)
+            df = spot_gamma(options, quote['current_price'])
+            
+            # Create subplots
+            ax1 = fig.add_subplot(2, 2, 1)
+            ax2 = fig.add_subplot(2, 2, 2)
+            ax3 = fig.add_subplot(2, 2, 3)
+            ax4 = fig.add_subplot(2, 2, 4)
+            
+            # Plot updated charts
+            plot_gamma_exposure(snapshot_time, *gamma_params, ax=ax1)
+            plot_absoulte_gamma_exposure(quote, df, ax=ax2)
+            plot_absoulte_gamma_exposure_by_calls_and_puts(quote, df, ax=ax3)
+            
+            # Update fourth chart (rest of the code remains the same)
+            options_copy = options.copy()
+            # Create a DataFrame for calls
+            dfCalls = options_copy[options_copy['put_call'] == 'C']
+            # Create a DataFrame for puts
+            dfPuts = options_copy[options_copy['put_call'] == 'P']
+            
+            dfTrimmedCall = dfCalls[['open_interest', 'gamma', 'volume', 'strike_price']]
+            dfTrimmedPut = dfPuts[['open_interest', 'gamma', 'volume', 'strike_price']]
+            
+            # Convert data types
+            dfTrimmedCall = dfTrimmedCall.astype({
+                'open_interest': float,
+                'gamma': float,
+                'volume': float,
+                'strike_price': float
+            })
+            
+            dfTrimmedPut = dfTrimmedPut.astype({
+                'open_interest': float,
+                'gamma': float,
+                'volume': float,
+                'strike_price': float
+            })
+            
+            # Calculate Gamma Exposure
+            spotPrice = quote['current_price']  # Get spot price from quote
+            spotprice_squared = spotPrice * spotPrice
+            dfTrimmedCall['CallGEX'] = dfTrimmedCall['gamma'] * (dfTrimmedCall['open_interest'] + dfTrimmedCall['volume']) * spotprice_squared
+            dfTrimmedPut['PutGEX'] = dfTrimmedPut['gamma'] * (dfTrimmedPut['open_interest'] + dfTrimmedPut['volume']) * spotprice_squared * -1
+            
+            # Calculate TotalGamma
+            dfTrimmedCall['TotalGamma'] = dfTrimmedCall['CallGEX'] * spotPrice / 10**11
+            dfTrimmedPut['TotalGamma'] = dfTrimmedPut['PutGEX'] * spotPrice / 10**11
+            
+            # Combine the data
+            dfCombined = pd.concat([dfTrimmedCall, dfTrimmedPut])
+            
+            # Aggregate data by strikePrice
+            dfAgg = dfCombined.groupby(['strike_price']).sum()
+            strikes = dfAgg.index.values
+            
+            # Find the index of the strike closest to the spot price
+            closest_strike_idx = np.argmin(np.abs(strikes - spotPrice))
+            
+            # In the fourth chart section, update the strike range:
+            # Define the range: 15 strikes before and after the spot price (changed from 10)
+            start_idx = max(0, closest_strike_idx - 15)
+            end_idx = min(len(strikes), closest_strike_idx + 15)
+            
+            # Filter strikes and dfAgg['TotalGamma'] to this range
+            filtered_strikes = strikes[start_idx:end_idx]
+            filtered_gammas = dfAgg['TotalGamma'].to_numpy()[start_idx:end_idx]
+            
+            # Plot the filtered strikes chart
+            ax4.set_facecolor(background_color)
+            ax4.grid(color='#d6d9e0', linewidth=.2)
+            ax4.spines['right'].set_visible(False)
+            ax4.spines['top'].set_visible(False)
+            ax4.spines['left'].set_visible(False)
+            ax4.spines['bottom'].set_visible(False)
+            
+            ax4.set_xlabel('Strike', fontweight="bold", color='w')
+            ax4.set_ylabel('GEX', fontweight="bold", color='w')
+            ax4.axvline(x=spotPrice, color='r', lw=2, linestyle='dashed', label=f"SPX Spot: {spotPrice:,.0f}")
+            
+            # Color bars based on gamma value
+            colors = ['#2da19a' if e > 0 else '#ef524f' for e in filtered_gammas]
+            
+            # Update ticks and labels
+            ax4.set_xticks(filtered_strikes)
+            ax4.set_xticklabels(filtered_strikes, rotation=45, color='w')
+            ax4.tick_params(axis='y', colors='w')
+            
+            # Plot the bar chart with the filtered strikes and gammas
+            ax4.bar(filtered_strikes, filtered_gammas, width=4.5, linewidth=0.1, edgecolor='k', color=colors)
+            ax4.legend(facecolor=background_color, edgecolor='white', fontsize=10, loc='upper left', framealpha=1, labelcolor='white')
+            ax4.set_title("Filtered Strike Range Gamma Exposure", fontweight="bold", fontsize=14, color='white')
+            
+            # Adjust layout
+            plt.tight_layout(rect=[0, 0, 1, 0.96])
+            plt.subplots_adjust(wspace=0.2, hspace=0.3)
+            
+        except Exception as e:
+            print(f"Error in update: {e}")
+    
+    # Create initial plot
+    update_plots(0)
+    
+    # Create animation with 1 second interval
+    ani = animation.FuncAnimation(fig, update_plots, interval=1000)
     plt.show()
 
-def plot_index_gamma_report(quote, options, snapshot_time):
-    spot_price = quote['current_price']
-    gamma_params = naive_gamma(quote, options)
-    plot_gamma_exposure(snapshot_time, *gamma_params)
-    df = spot_gamma(options, spot_price)
-    plot_absoulte_gamma_exposure(quote, df)
-    plot_absoulte_gamma_exposure_by_calls_and_puts(quote, df)
+def main():
+    # Get symbol input from user
+    symbol = input("Enter symbol (e.g., $SPX, AAPL): ").strip().upper()
+    
+    # Add default to $SPX if no input
+    if not symbol:
+        symbol = '$SPX'
+        print(f"No symbol entered, defaulting to {symbol}")
+    
+    # Add $ prefix for indices if not present
+    if symbol in ['SPX', 'VIX', 'NDX', 'RUT'] and not symbol.startswith('$'):
+        symbol = f'${symbol}'
+        print(f"Added $ prefix for index: {symbol}")
+    
+    try:
+        quote, options, snapshot_time = get_schwab_options_chain(symbol)
+        plot_index_gamma_report(quote, options, snapshot_time, symbol, dashboard=True)  # Added symbol parameter
+    except Exception as e:
+        print(f"Error processing {symbol}: {str(e)}")
 
-symbol = '$SPX'  # Correct Schwab symbol format
-
-# Get data using Schwab API instead of CBOE
-quote, options, snapshot_time = get_schwab_options_chain(symbol)
-plot_index_gamma_report(quote, options, snapshot_time)
-
-options_copy = options.copy()
-# Create a DataFrame for calls
-dfCalls = options_copy[options_copy['put_call'] == 'C']
-
-# Create a DataFrame for puts
-dfPuts = options_copy[options_copy['put_call'] == 'P']
-
-dfTrimmedCall = dfCalls[['open_interest', 'gamma', 'volume', 'strike_price']]
-dfTrimmedPut = dfPuts[['open_interest', 'gamma', 'volume', 'strike_price']]
-
-# Convert data types
-dfTrimmedCall = dfTrimmedCall.astype({
-            'open_interest': float,
-            'gamma': float,
-            'volume': float,
-            'strike_price': float
-        })
-
-dfTrimmedPut = dfTrimmedPut.astype({
-            'open_interest': float,
-            'gamma': float,
-            'volume': float,
-            'strike_price': float
-        })
-
-spot_price = quote['current_price']
-
-# Calculate Gamma Exposure
-spotprice_squared = spot_price * spot_price
-dfTrimmedCall['CallGEX'] = dfTrimmedCall['gamma'] * (dfTrimmedCall['open_interest'] + dfTrimmedCall['volume']) * spotprice_squared
-dfTrimmedPut['PutGEX'] = dfTrimmedPut['gamma'] * (dfTrimmedPut['open_interest'] + dfTrimmedPut['volume']) * spotprice_squared * -1
-
-# Calculate TotalGamma
-dfTrimmedCall['TotalGamma'] = dfTrimmedCall['CallGEX'] * spot_price / 10**11
-dfTrimmedPut['TotalGamma'] = dfTrimmedPut['PutGEX'] * spot_price / 10**11
-
-# Combine the data
-dfCombined = pd.concat([dfTrimmedCall, dfTrimmedPut])
-
-# Aggregate data by strikePrice
-dfAgg = dfCombined.groupby(['strike_price']).sum()
-strikes = dfAgg.index.values
-
-Total = dfAgg['TotalGamma'].sum().round(0)
-
-# Assume strikes and dfAgg['TotalGamma'] are already defined
-# Find the index of the strike closest to the spot price
-closest_strike_idx = np.argmin(np.abs(strikes - spot_price))
-
-# Define the range: 30 strikes before and after the spot price
-start_idx = max(0, closest_strike_idx - 30)
-end_idx = min(len(strikes), closest_strike_idx + 30)
-
-# Filter strikes and dfAgg['TotalGamma'] to this range
-filtered_strikes = strikes[start_idx:end_idx]
-filtered_gammas = dfAgg['TotalGamma'].to_numpy()[start_idx:end_idx]
-
-# Plot Absolute Gamma Exposure
-f, ax = plt.subplots(figsize=(13, 5), facecolor='#161a25')  # Set the size that you'd like (width, height)
-plt.grid(color='#d6d9e0', linewidth=.2)
-ax.set_facecolor('#161a25')
-ax.spines['right'].set_visible(False)
-ax.spines['top'].set_visible(False)
-ax.spines['left'].set_visible(False)
-ax.spines['bottom'].set_visible(False)
-
-# Update the title to include the current date and time
-plt.xlabel('Strike', fontweight="bold", color='w')
-plt.ylabel('GEX', fontweight="bold", color='w')
-plt.axvline(x=spot_price, color='r', lw=2, linestyle='dashed', label="SPX Spot: " + str("{:,.0f}".format(spot_price)))
-
-# Color bars based on gamma value
-colors = ['#2da19a' if e > 0 else '#ef524f' for e in filtered_gammas]
-
-# Update ticks and labels
-plt.xticks(rotation=45)  # Rotates X-Axis Ticks by 45-degrees
-plt.xticks(filtered_strikes, color='w')
-plt.yticks(color='w')
-
-# Plot the bar chart with the filtered strikes and gammas
-plt.bar(filtered_strikes, filtered_gammas, width=4.5, linewidth=0.1, edgecolor='k', color=colors)
-plt.legend(facecolor=background_color, edgecolor='white', fontsize=12, loc='upper left', framealpha=1, labelcolor='white')
-
-# Save the figure with high resolution
-f.savefig("myplot.png", dpi=2000, bbox_inches='tight')
-
-# Show the plot
-plt.show()
+if __name__ == "__main__":
+    main()
