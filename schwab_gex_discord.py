@@ -97,7 +97,7 @@ def _gamma_range(quote, from_range=0.98, to_range=1.02):
     toStrike = to_range * spotPrice
     return spotPrice, fromStrike, toStrike
 
-def naive_gamma(quote, options):
+def naive_gamma(quote, options, r=0.043):
     spotPrice, fromStrike, toStrike = _gamma_range(quote)
 
     levels = np.linspace(fromStrike, toStrike, 60)
@@ -117,10 +117,10 @@ def naive_gamma(quote, options):
     df = options.copy()
     for level in levels:
         df_ = df[df.put_call == 'C']
-        df.loc[df_.index, 'callGammaEx'] = _calcGammaExCall(level, df_.strike_price, df_.iv, df_.days_to_expiration, 0, 0, df_.open_interest)
+        df.loc[df_.index, 'callGammaEx'] = _calcGammaExCall(level, df_.strike_price, df_.iv, df_.days_to_expiration, r, 0, df_.open_interest)
 
         df_ = df[df.put_call == 'P']
-        df.loc[df_.index, 'putGammaEx'] = _calcGammaExCall(level, df_.strike_price, df_.iv, df_.days_to_expiration, 0, 0, df_.open_interest)
+        df.loc[df_.index, 'putGammaEx'] = _calcGammaExCall(level, df_.strike_price, df_.iv, df_.days_to_expiration, r, 0, df_.open_interest)
 
         totalGamma.append(df.callGammaEx.sum() - df.putGammaEx.sum())
 
@@ -198,7 +198,7 @@ def plot_gamma_exposure(todayDate, quote, levels, totalGamma, totalGammaExNext, 
     chartTitle = f"Gamma Exposure Profile, {quote['symbol']}, {todayDate.strftime('%d %b %Y')}"
     ax.set_title(chartTitle, fontweight="bold", fontsize=14, color='white')
     ax.set_xlabel('Index Price', fontweight="bold", color='white')
-    ax.set_ylabel('Gamma Exposure (\$ billions/1% move)', fontweight="bold", color='white')
+    ax.set_ylabel('Gamma Exposure ($\$ billions/1% move)', fontweight="bold", color='white')
     ax.axvline(x=spotPrice, color='r', lw=1, label=f"{quote['symbol']} Spot: {spotPrice:,.0f}")
     
     # Handle zero gamma crossing point
@@ -252,7 +252,7 @@ def plot_absoulte_gamma_exposure(quote, df_agg, ax=None):
     title = f"Total Gamma: \\${df_agg.total_gamma.sum():.2f} Bn per 1% {quote['symbol']} Move"
     ax.set_title(title, fontweight="bold", fontsize=14, color='white')
     ax.set_xlabel('Strike', fontweight="bold", color='white')
-    ax.set_ylabel('Spot Gamma Exposure (\$ billions/1% move)', fontweight="bold", color='white')
+    ax.set_ylabel('Spot Gamma Exposure ($\$ billions/1% move)', fontweight="bold", color='white')
     ax.axvline(x=spotPrice, color='r', lw=1, label=f"{quote['symbol']} Spot - {spotPrice:,.0f}")
     ax.legend(facecolor=background_color, edgecolor='white', fontsize=10, loc='upper left', framealpha=1, labelcolor='white')
     ax.tick_params(axis='x', colors='white')
@@ -284,7 +284,7 @@ def plot_absoulte_gamma_exposure_by_calls_and_puts(quote, df_agg, ax=None):
     title = f"Total Gamma: \\${df_agg.total_gamma.sum():.2f} Bn per 1% {quote['symbol']} Move"
     ax.set_title(title, fontweight="bold", fontsize=14, color='white')
     ax.set_xlabel('Strike', fontweight="bold", color='white')
-    ax.set_ylabel('Spot Gamma Exposure (\$ billions/1% move)', fontweight="bold", color='white')
+    ax.set_ylabel('Spot Gamma Exposure ($\$ billions/1% move)', fontweight="bold", color='white')
     ax.axvline(x=spotPrice, color='r', lw=1, label=f"{quote['symbol']} Spot - {spotPrice:,.0f}")
     ax.legend(facecolor=background_color, edgecolor='white', fontsize=10, loc='upper left', framealpha=1, labelcolor='white')
     ax.tick_params(axis='x', colors='white')
